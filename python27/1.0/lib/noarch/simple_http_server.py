@@ -184,9 +184,12 @@ class HttpServerHandler():
 
     def send_response(self, mimetype, data):
         no_cache = "Cache-Control: no-cache, no-store, must-revalidate\r\nPragma: no-cache\r\nExpires: 0\r\n"
-        self.wfile.write(('HTTP/1.1 200\r\n%sAccess-Control-Allow-Origin: *\r\nContent-Type: %s\r\nContent-Length: %s\r\n\r\n'
-             % (no_cache, mimetype, len(data))).encode())
-        self.wfile.write(data)
+        try:
+            self.wfile.write(('HTTP/1.1 200\r\n%sAccess-Control-Allow-Origin: *\r\nContent-Type: %s\r\nContent-Length: %s\r\n\r\n'
+                 % (no_cache, mimetype, len(data))).encode())
+            self.wfile.write(data)
+        except:
+            pass
 
     def send_error(self, code, message=None):
         self.wfile.write('HTTP/1.1 %d\r\n' % code)
@@ -326,7 +329,7 @@ class TestHttpServer(HttpServerHandler):
 
         if url_path == '/':
             data = "OK\r\n"
-            self.wfile.write('HTTP/1.1 200\r\nContent-Length: %d\r\n\r\n%s' %(len(data), data) )
+            self.wfile.write('HTTP/1.1 200\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: %d\r\n\r\n%s' %(len(data), data) )
         elif url_path == '/null':
             mimetype = "application/x-binary"
             if "size" in reqs:

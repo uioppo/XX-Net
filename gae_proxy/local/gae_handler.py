@@ -17,7 +17,9 @@ import Queue
 import urlparse
 import threading
 
-from proxy import xlog
+
+from xlog import getLogger
+xlog = getLogger("gae_proxy")
 from connect_manager import https_manager
 from appids_manager import appid_manager
 
@@ -155,6 +157,7 @@ def request(headers={}, payload=None):
                 ssl_sock.appid = appid_manager.get_appid()
                 if not ssl_sock.appid:
                     google_ip.report_connect_closed(ssl_sock.ip, "no appid")
+                    time.sleep(60)
                     raise GAE_Exception(1, "no appid can use")
                 headers['Host'] = ssl_sock.appid + ".appspot.com"
                 ssl_sock.host = headers['Host']
@@ -311,7 +314,7 @@ def handler(method, url, headers, body, wfile):
 
                 try:
                     server_type = response.getheader('Server', "")
-                    if "gws" not in server_type and "Google Frontend" not in server_type:
+                    if "gws" not in server_type and "Google Frontend" not in server_type and "GFE" not in server_type:
                         xlog.warn("IP:%s not support GAE, server type:%s", response.ssl_sock.ip, server_type)
                         google_ip.report_connect_fail(response.ssl_sock.ip, force_remove=True)
                         response.close()
@@ -322,8 +325,8 @@ def handler(method, url, headers, body, wfile):
                     continue
 
             if response.app_status == 404:
-                xlog.warning('APPID %r not exists, remove it.', response.ssl_sock.appid)
-                appid_manager.report_not_exist(response.ssl_sock.appid)
+                #xlog.warning('APPID %r not exists, remove it.', response.ssl_sock.appid)
+                appid_manager.report_not_exist(response.ssl_sock.appid, response.ssl_sock.ip)
                 google_ip.report_connect_closed(response.ssl_sock.ip, "appid not exist")
                 appid = appid_manager.get_appid()
 
@@ -347,9 +350,9 @@ def handler(method, url, headers, body, wfile):
                 continue
 
             if response.app_status == 503:
-                xlog.warning('APPID %r out of Quota, remove it.', response.ssl_sock.appid)
+                xlog.warning('APPID %r out of Quota, remove it. %s', response.ssl_sock.appid, response.ssl_sock.ip)
                 appid_manager.report_out_of_quota(response.ssl_sock.appid)
-                google_ip.report_connect_closed(response.ssl_sock.ip, "get_timeout")
+                google_ip.report_connect_closed(response.ssl_sock.ip, "out of quota")
                 appid = appid_manager.get_appid()
 
                 if not appid:
@@ -437,7 +440,6 @@ def handler(method, url, headers, body, wfile):
                         length, response.ssl_sock.handshake_time, response.status, url)
 
                 response.ssl_sock.received_size += body_length
-                google_ip.report_ip_traffic(response.ssl_sock.ip, body_length)
                 https_manager.save_ssl_connection_for_reuse(response.ssl_sock, call_time=time_request)
                 return
 
@@ -611,7 +613,7 @@ class RangeFetch(object):
 
                     if response.app_status == 404:
                         xlog.warning('APPID %r not exists, remove it.', response.ssl_sock.appid)
-                        appid_manager.report_not_exist(response.ssl_sock.appid)
+                        appid_manager.report_not_exist(response.ssl_sock.appid, response.ssl_sock.ip)
                         appid = appid_manager.get_appid()
                         if not appid:
                             xlog.error("no appid left")

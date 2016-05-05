@@ -17,7 +17,9 @@ import locale
 import time
 
 
-from proxy import xlog
+
+from xlog import getLogger
+xlog = getLogger("gae_proxy")
 from config import config
 from appids_manager import appid_manager
 from google_ip import google_ip
@@ -27,9 +29,11 @@ from scan_ip_log import scan_ip_log
 import ConfigParser
 import connect_control
 import ip_utils
+import check_local_network
 import check_ip
 import cert_util
 import simple_http_server
+import test_appid
 
 os.environ['HTTPS_PROXY'] = ''
 current_path = os.path.dirname(os.path.abspath(__file__))
@@ -38,6 +42,7 @@ web_ui_path = os.path.join(current_path, os.path.pardir, "web_ui")
 
 
 import yaml
+
 
 class User_special(object):
     def __init__(self):
@@ -212,6 +217,8 @@ class ControlHandler(simple_http_server.HttpServerHandler):
             return self.req_is_ready_handler()
         elif path == "/test_ip":
             return self.req_test_ip_handler()
+        elif path == "/check_ip":
+            return self.req_check_ip_handler()
         elif path == "/quit":
             connect_control.keep_running = False
             data = "Quit"
@@ -386,41 +393,50 @@ class ControlHandler(simple_http_server.HttpServerHandler):
         lang_code = 'Unknown'
         return lang_code
 
-
     def req_status_handler(self):
         if "user-agent" in self.headers.dict:
             user_agent = self.headers.dict["user-agent"]
         else:
             user_agent = ""
 
-        res_arr = {"ip_num":len(google_ip.gws_ip_list),
-                   "good_ip_num":google_ip.good_ip_num,
-                   "sys_platform":"%s, %s" % (platform.machine(), platform.platform()),
-                   "os_system":platform.system(),
-                   "os_version":platform.version(),
-                   "os_release":platform.release(),
-                   "architecture":platform.architecture(),
-                   "os_detail":env_info.os_detail(),
-                   "language":self.get_os_language(),
-                   "browser":user_agent,
-                   "xxnet_version":self.xxnet_version(),
+        good_ip_num = google_ip.good_ip_num
+        if good_ip_num > len(google_ip.gws_ip_list):
+            good_ip_num = len(google_ip.gws_ip_list)
+
+        res_arr = {
+                   "sys_platform": "%s, %s" % (platform.machine(), platform.platform()),
+                   "os_system": platform.system(),
+                   "os_version": platform.version(),
+                   "os_release": platform.release(),
+                   "architecture": platform.architecture(),
+                   "os_detail": env_info.os_detail(),
+                   "language": self.get_os_language(),
+                   "browser": user_agent,
+                   "xxnet_version": self.xxnet_version(),
                    "python_version": platform.python_version(),
-                   "proxy_listen":config.LISTEN_IP + ":" + str(config.LISTEN_PORT),
-                   "gae_appid":"|".join(config.GAE_APPIDS),
-                   "connected_link_new":len(https_manager.new_conn_pool.pool),
-                   "connected_link_used":len(https_manager.gae_conn_pool.pool),
-                   "working_appid":"|".join(appid_manager.working_appid_list),
-                   "out_of_quota_appids":"|".join(appid_manager.out_of_quota_appids),
-                   "not_exist_appids":"|".join(appid_manager.not_exist_appids),
-                   "pac_url":config.pac_url,
-                   "scan_ip_thread_num":google_ip.searching_thread_count,
-                   "ip_handshake_10":google_ip.ip_handshake_th(10),
-                   "block_stat":connect_control.block_stat(),
-                   "use_ipv6":config.CONFIG.getint("google_ip", "use_ipv6"),
-                   "high_prior_connecting_num":connect_control.high_prior_connecting_num,
-                   "low_prior_connecting_num":connect_control.low_prior_connecting_num,
-                   "high_prior_lock":len(connect_control.high_prior_lock),
-                   "low_prior_lock":len(connect_control.low_prior_lock),
+
+                   "proxy_listen": config.LISTEN_IP + ":" + str(config.LISTEN_PORT),
+                   "pac_url": config.pac_url,
+                   "use_ipv6": config.CONFIG.getint("google_ip", "use_ipv6"),
+
+                   "gae_appid": "|".join(config.GAE_APPIDS),
+                   "working_appid": "|".join(appid_manager.working_appid_list),
+                   "out_of_quota_appids": "|".join(appid_manager.out_of_quota_appids),
+                   "not_exist_appids": "|".join(appid_manager.not_exist_appids),
+
+                   "network_state": check_local_network.network_stat,
+                   "ip_num": len(google_ip.gws_ip_list),
+                   "good_ip_num": good_ip_num,
+                   "connected_link_new": len(https_manager.new_conn_pool.pool),
+                   "connected_link_used": len(https_manager.gae_conn_pool.pool),
+                   "scan_ip_thread_num": google_ip.scan_thread_count,
+                   "ip_quality": google_ip.ip_quality(),
+                   "block_stat": connect_control.block_stat(),
+
+                   "high_prior_connecting_num": connect_control.high_prior_connecting_num,
+                   "low_prior_connecting_num": connect_control.low_prior_connecting_num,
+                   "high_prior_lock": len(connect_control.high_prior_lock),
+                   "low_prior_lock": len(connect_control.low_prior_lock),
                    }
         data = json.dumps(res_arr, indent=0, sort_keys=True)
         self.send_response('text/html', data)
@@ -430,20 +446,42 @@ class ControlHandler(simple_http_server.HttpServerHandler):
         reqs = urlparse.parse_qs(req, keep_blank_values=True)
         data = ''
 
+        appid_updated = False
+
         try:
             if reqs['cmd'] == ['get_config']:
                 data = json.dumps(user_config.user_special, default=lambda o: o.__dict__)
             elif reqs['cmd'] == ['set_config']:
-                user_config.user_special.appid = self.postvars['appid'][0]
-                user_config.user_special.password = self.postvars['password'][0]
+                appids = self.postvars['appid'][0]
+                if appids != user_config.user_special.appid:
+                    if appids and google_ip.good_ip_num:
+                        fail_appid_list = test_appid.test_appids(appids)
+                        if len(fail_appid_list):
+                            fail_appid = "|".join(fail_appid_list)
+                            return self.send_response('text/html', '{"res":"fail", "reason":"appid fail:%s"}' % fail_appid)
+
+                    appid_updated = True
+                    user_config.user_special.appid = appids
+
                 user_config.user_special.proxy_enable = self.postvars['proxy_enable'][0]
                 user_config.user_special.proxy_type = self.postvars['proxy_type'][0]
                 user_config.user_special.proxy_host = self.postvars['proxy_host'][0]
                 user_config.user_special.proxy_port = self.postvars['proxy_port'][0]
+                if not user_config.user_special.proxy_port:
+                    user_config.user_special.proxy_port = 0
                 user_config.user_special.proxy_user = self.postvars['proxy_user'][0]
                 user_config.user_special.proxy_passwd = self.postvars['proxy_passwd'][0]
                 user_config.user_special.host_appengine_mode = self.postvars['host_appengine_mode'][0]
-                user_config.user_special.use_ipv6 = int(self.postvars['use_ipv6'][0])
+
+                use_ipv6 = int(self.postvars['use_ipv6'][0])
+                if user_config.user_special.use_ipv6 != use_ipv6:
+                    if use_ipv6:
+                        if not check_local_network.check_ipv6():
+                            xlog.warn("Enable Ipv6 but check failed.")
+                            return self.send_response('text/html', '{"res":"fail", "reason":"IPv6 fail"}')
+
+                    user_config.user_special.use_ipv6 = use_ipv6
+
                 user_config.save()
 
                 config.load()
@@ -451,7 +489,8 @@ class ControlHandler(simple_http_server.HttpServerHandler):
                 import connect_manager
                 connect_manager.load_proxy_config()
                 connect_manager.https_manager.load_config()
-                connect_manager.forwork_manager.load_config()
+                if appid_updated:
+                    connect_manager.https_manager.clean_old_connection()
 
                 google_ip.reset()
                 check_ip.load_proxy_config()
@@ -480,7 +519,7 @@ class ControlHandler(simple_http_server.HttpServerHandler):
 
             if deploy_proc and deploy_proc.poll() == None:
                 xlog.warn("deploy is running, request denied.")
-                data = '{"res":"deploy is running", "time":"%s"}' % (time_now)
+                data = '{"res":"deploy is running", "time":"%s"}' % time_now
 
             else:
                 try:
@@ -500,9 +539,9 @@ class ControlHandler(simple_http_server.HttpServerHandler):
         elif reqs['cmd'] == ['cancel']:
             if deploy_proc and deploy_proc.poll() == None:
                 deploy_proc.kill()
-                data = '{"res":"deploy is killed", "time":"%s"}' % (time_now)
+                data = '{"res":"deploy is killed", "time":"%s"}' % time_now
             else:
-                data = '{"res":"deploy is not running", "time":"%s"}' % (time_now)
+                data = '{"res":"deploy is not running", "time":"%s"}' % time_now
 
         elif reqs['cmd'] == ['get_log']:
             if deploy_proc and os.path.isfile(log_path):
@@ -518,7 +557,7 @@ class ControlHandler(simple_http_server.HttpServerHandler):
                 else:
                     status = 'finished'
 
-            data = json.dumps({'status':status,'log':content, 'time':time_now})
+            data = json.dumps({'status': status, 'log': content, 'time': time_now})
 
         self.send_response('text/html', data)
 
@@ -545,7 +584,7 @@ class ControlHandler(simple_http_server.HttpServerHandler):
                 if google_ip.ip_dict[ip]['fail_times'] > 0:
                     continue
                 data += "%s|" % ip
-            data = data[0 : len(data) - 1]
+            data = data[0: len(data) - 1]
             data += '"}'
 
         self.send_response('text/html', data)
@@ -553,10 +592,9 @@ class ControlHandler(simple_http_server.HttpServerHandler):
     def req_test_ip_handler(self):
         req = urlparse.urlparse(self.path).query
         reqs = urlparse.parse_qs(req, keep_blank_values=True)
-        data = ''
 
         ip = reqs['ip'][0]
-        result = check_ip.test_gws(ip)
+        result = check_ip.test_gae_ip(ip)
         if not result:
             data = "{'res':'fail'}"
         else:
@@ -599,10 +637,9 @@ class ControlHandler(simple_http_server.HttpServerHandler):
             transfered_data = google_ip.ip_dict[ip]["transfered_data"]
             transfered_quota = transfered_data - (active_time * config.ip_traffic_quota)
 
-
             history = google_ip.ip_dict[ip]["history"]
             t0 = 0
-            str = ''
+            str_out = ''
             for item in history:
                 t = item[0]
                 v = item[1]
@@ -610,11 +647,11 @@ class ControlHandler(simple_http_server.HttpServerHandler):
                     t0 = t
                 time_per = int((t - t0) * 1000)
                 t0 = t
-                str += "%d(%s) " % (time_per, v)
+                str_out += "%d(%s) " % (time_per, v)
             data += "<tr><td>%d</td><td>%s</td><td>%d</td><td>%d</td><td>%d</td><td>%d</td><td>%d</td><td>%d</td>" \
                     "<td>%d</td><td>%d</td><td>%d</td><td>%s</td></tr>\n" % \
                     (i, ip, handshake_time, fail_times, links, get_time, success_time, fail_time,
-                    active_time, transfered_data, transfered_quota, str)
+                    active_time, transfered_data, transfered_quota, str_out)
             i += 1
 
         data += "</table></div></body></html>"
@@ -643,7 +680,7 @@ class ControlHandler(simple_http_server.HttpServerHandler):
             user_config.save()
 
             scan_ip_thread_num = int(self.postvars['scan_ip_thread_num'][0])
-            google_ip.update_scan_thread_num(scan_ip_thread_num)
+            google_ip.adjust_scan_thread_num(scan_ip_thread_num)
             data = '{"res":"success"}'
         elif reqs['cmd'] == ['get_scan_ip_log']:
             data = scan_ip_log.get_log_content()
@@ -657,6 +694,10 @@ class ControlHandler(simple_http_server.HttpServerHandler):
 
         data += "\nGAE conn:\n"
         data += https_manager.gae_conn_pool.to_string()
+
+        for host in https_manager.host_conn_pool:
+            data += "\nHost:%s\n" % host
+            data += https_manager.host_conn_pool[host].to_string()
 
         mimetype = 'text/plain'
         self.send_response(mimetype, data)
@@ -675,3 +716,30 @@ class ControlHandler(simple_http_server.HttpServerHandler):
 
         mimetype = 'text/plain'
         self.send_response(mimetype, data)
+
+    def req_check_ip_handler(self):
+        req = urlparse.urlparse(self.path).query
+        reqs = urlparse.parse_qs(req, keep_blank_values=True)
+        data = ""
+        if reqs['cmd'] == ['get_process']:
+            all_ip_num = len(google_ip.ip_dict)
+            left_num = google_ip.scan_exist_ip_queue.qsize()
+            good_num = google_ip.good_ip_num
+            data = json.dumps(dict(all_ip_num=all_ip_num, left_num=left_num, good_num=good_num))
+            self.send_response('text/plain', data)
+        elif reqs['cmd'] == ['start']:
+            left_num = google_ip.scan_exist_ip_queue.qsize()
+            if left_num:
+                self.send_response('text/plain', '{"res":"fail", "reason":"running"}')
+            else:
+                google_ip.start_scan_all_exist_ip()
+                self.send_response('text/plain', '{"res":"success"}')
+        elif reqs['cmd'] == ['stop']:
+            left_num = google_ip.scan_exist_ip_queue.qsize()
+            if not left_num:
+                self.send_response('text/plain', '{"res":"fail", "reason":"not running"}')
+            else:
+                google_ip.stop_scan_all_exist_ip()
+                self.send_response('text/plain', '{"res":"success"}')
+        else:
+            return self.send_not_exist()

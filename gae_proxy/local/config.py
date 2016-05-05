@@ -7,7 +7,9 @@ import os
 import re
 import io
 
-from proxy import xlog
+
+from xlog import getLogger
+xlog = getLogger("gae_proxy")
 
 
 
@@ -49,7 +51,7 @@ class Config(object):
         self.LISTEN_VISIBLE = self.CONFIG.getint('listen', 'visible')
         self.LISTEN_DEBUGINFO = self.CONFIG.getint('listen', 'debuginfo')
 
-        self.GAE_APPIDS = re.findall(r'[\w\-\.]+', self.CONFIG.get('gae', 'appid').replace('.appspot.com', ''))
+        self.GAE_APPIDS = [x.strip() for x in self.CONFIG.get('gae', 'appid').split("|")]
         self.GAE_PASSWORD = self.CONFIG.get('gae', 'password').strip()
 
         fwd_endswith = []
@@ -121,6 +123,9 @@ class Config(object):
 
         self.https_max_connect_thread = config.CONFIG.getint("connect_manager", "https_max_connect_thread")
         self.connect_interval = config.CONFIG.getint("connect_manager", "connect_interval")
+
+        self.log_file = config.CONFIG.getint("system", "log_file")
+
 
         # change to True when finished import CA cert to browser
         # launcher will wait import ready then open browser to show status, check update etc

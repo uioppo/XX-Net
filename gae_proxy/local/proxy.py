@@ -83,9 +83,14 @@ def create_data_path():
 create_data_path()
 
 
-from xlog import Logger
-#log_file = os.path.join(data_gae_proxy_path, "local.log")
-xlog = Logger(buffer_size=500)
+from config import config
+
+from xlog import getLogger
+xlog = getLogger("gae_proxy")
+xlog.set_buffer(500)
+if config.log_file:
+    log_file = os.path.join(data_gae_proxy_path, "local.log")
+    xlog.set_file(log_file)
 
 from cert_util import CertUtil
 import pac_server
@@ -93,7 +98,6 @@ import simple_http_server
 import proxy_handler
 import connect_control
 import env_info
-from config import config
 import connect_manager
 from gae_handler import spawn_later
 

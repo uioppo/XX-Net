@@ -18,7 +18,9 @@ from connect_manager import https_manager
 from gae_handler import return_fail_message
 from google_ip import google_ip
 from config import config
-from proxy import xlog
+
+from xlog import getLogger
+xlog = getLogger("gae_proxy")
 
 
 
@@ -80,6 +82,9 @@ def fetch(method, host, path, headers, payload, bufsize=8192):
 def handler(method, host, url, headers, body, wfile):
     time_request = time.time()
 
+    if "Connection" in headers and headers["Connection"] == "close":
+        del headers["Connection"]
+
     errors = []
     response = None
     while True:
@@ -91,7 +96,7 @@ def handler(method, host, url, headers, body, wfile):
             if response:
                 if response.status > 400:
                     server_type = response.getheader('Server', "")
-                    if "gws" not in server_type and "Google Frontend" not in server_type:
+                    if "gws" not in server_type and "Google Frontend" not in server_type and "GFE" not in server_type:
                         xlog.warn("IP:%s not support GAE, server type:%s status:%d", response.ssl_sock.ip, server_type, response.status)
                         google_ip.report_connect_fail(response.ssl_sock.ip, force_remove=True)
                         response.close()

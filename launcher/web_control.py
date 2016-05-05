@@ -10,14 +10,11 @@ if __name__ == "__main__":
     sys.path.append(noarch_lib)
 
 import re
-import SocketServer, socket, ssl
-import BaseHTTPServer
-import errno
+import socket, ssl
 import urlparse
 import threading
 import urllib2
 import time
-import datetime
 
 root_path = os.path.abspath(os.path.join(current_path, os.pardir))
 
@@ -30,20 +27,19 @@ import config
 import autorun
 import update_from_github
 import simple_http_server
-import jinja2_i18n_helper
+from simple_i18n import SimpleI18N
 
 NetWorkIOError = (socket.error, ssl.SSLError, OSError)
 
-
+i18n_translator = SimpleI18N(config.get(['language'], None))
 
 module_menus = {}
 class Http_Handler(simple_http_server.HttpServerHandler):
     deploy_proc = None
 
-
     def load_module_menus(self):
         global module_menus
-        module_menus = {}
+        new_module_menus = {}
         #config.load()
         modules = config.get(['modules'], None)
         for module in modules:
@@ -56,17 +52,13 @@ class Http_Handler(simple_http_server.HttpServerHandler):
             if not os.path.isfile(menu_path):
                 continue
 
-            #module_menu = yaml.load(file(menu_path, 'r')) # non-i18n
             # i18n code lines (Both the locale dir & the template dir are module-dependent)
             locale_dir = os.path.abspath(os.path.join(root_path, module, 'lang'))
-            template_dir = os.path.abspath(os.path.join(root_path, module, 'web_ui'))
-            jinja2_i18n_helper.ihelper.refresh_env(locale_dir, template_dir)
-            stream = jinja2_i18n_helper.ihelper.render("menu.yaml", None)
-            
+            stream = i18n_translator.render(locale_dir, menu_path)
             module_menu = yaml.load(stream)
-            module_menus[module] = module_menu
+            new_module_menus[module] = module_menu
 
-        module_menus = sorted(module_menus.iteritems(), key=lambda (k,v): (v['menu_sort_id']))
+        module_menus = sorted(new_module_menus.iteritems(), key=lambda (k,v): (v['menu_sort_id']))
         #for k,v in self.module_menus:
         #    logging.debug("m:%s id:%d", k, v['menu_sort_id'])
 
@@ -132,10 +124,17 @@ class Http_Handler(simple_http_server.HttpServerHandler):
                 controler.do_GET()
                 return
             else:
-                file_path = os.path.join(root_path, module, url_path_list[3:].join('/'))
+                relate_path = '/'.join(url_path_list[3:])
+                file_path = os.path.join(root_path, module, "web_ui", relate_path)
+                if not os.path.isfile(file_path):
+                    return self.send_not_found()
+
+                # i18n code lines (Both the locale dir & the template dir are module-dependent)
+                locale_dir = os.path.abspath(os.path.join(root_path, module, 'lang'))
+                content = i18n_translator.render(locale_dir, file_path)
+                return self.send_response('text/html', content)
         else:
             file_path = os.path.join(current_path, 'web_ui' + url_path)
-
 
         xlog.debug ('launcher web_control %s %s %s ', self.address_string(), self.command, self.path)
         if os.path.isfile(file_path):
@@ -145,6 +144,7 @@ class Http_Handler(simple_http_server.HttpServerHandler):
                 mimetype = 'text/css'
             elif file_path.endswith('.html'):
                 mimetype = 'text/html'
+
             elif file_path.endswith('.jpg'):
                 mimetype = 'image/jpeg'
             elif file_path.endswith('.png'):
@@ -156,8 +156,8 @@ class Http_Handler(simple_http_server.HttpServerHandler):
             self.send_file(file_path, mimetype)
         elif url_path == '/config':
             self.req_config_handler()
-        elif url_path == '/download':
-            self.req_download_handler()
+        elif url_path == '/update':
+            self.req_update_handler()
         elif url_path == '/init_module':
             self.req_init_module_handler()
         elif url_path == '/quit':
@@ -189,17 +189,10 @@ class Http_Handler(simple_http_server.HttpServerHandler):
 
         if len(module_menus) == 0:
             self.load_module_menus()
-            
-        # Old code without i18n
-        #index_path = os.path.join(current_path, 'web_ui', "index.html")
-        #with open(index_path, "r") as f:
-         #   index_content = f.read()
 
         # i18n code lines (Both the locale dir & the template dir are module-dependent)
         locale_dir = os.path.abspath(os.path.join(current_path, 'lang'))
-        template_dir = os.path.abspath(os.path.join(current_path, 'web_ui'))
-        jinja2_i18n_helper.ihelper.refresh_env(locale_dir, template_dir)
-        index_content = jinja2_i18n_helper.ihelper.render("index.html", None)
+        index_content = i18n_translator.render(locale_dir, os.path.join(current_path, "web_ui", "index.html"))
 
         menu_content = ''
         for module,v in module_menus:
@@ -209,7 +202,7 @@ class Http_Handler(simple_http_server.HttpServerHandler):
             for sub_id in v['sub_menus']:
                 sub_title = v['sub_menus'][sub_id]['title']
                 sub_url = v['sub_menus'][sub_id]['url']
-                if target_module == title and target_menu == sub_url:
+                if target_module == module and target_menu == sub_url:
                     active = 'class="active"'
                 else:
                     active = ''
@@ -217,15 +210,9 @@ class Http_Handler(simple_http_server.HttpServerHandler):
 
         right_content_file = os.path.join(root_path, target_module, "web_ui", target_menu + ".html")
         if os.path.isfile(right_content_file):
-            # Old code without i18n
-            #with open(right_content_file, "r") as f:
-            #   right_content = f.read()
-            
             # i18n code lines (Both the locale dir & the template dir are module-dependent)
             locale_dir = os.path.abspath(os.path.join(root_path, target_module, 'lang'))
-            template_dir = os.path.abspath(os.path.join(root_path, target_module, 'web_ui'))
-            jinja2_i18n_helper.ihelper.refresh_env(locale_dir, template_dir)
-            right_content = jinja2_i18n_helper.ihelper.render(target_menu + ".html", None)
+            right_content = i18n_translator.render(locale_dir, os.path.join(root_path, target_module, "web_ui", target_menu + ".html"))
 
         else:
             right_content = ""
@@ -238,8 +225,6 @@ class Http_Handler(simple_http_server.HttpServerHandler):
         reqs = urlparse.parse_qs(req, keep_blank_values=True)
         data = ''
 
-        current_version = update_from_github.current_version()
-
         if reqs['cmd'] == ['get_config']:
             config.load()
             check_update = config.get(["update", "check_update"], 1)
@@ -248,12 +233,14 @@ class Http_Handler(simple_http_server.HttpServerHandler):
             elif check_update == 1:
                 check_update = "stable"
 
-            data = '{ "check_update": "%s", "popup_webui": %d, "allow_remote_connect": %d, "show_systray": %d, "auto_start": %d, "php_enable": %d, "gae_proxy_enable": %d }' %\
+            data = '{ "check_update": "%s", "language": "%s", "popup_webui": %d, "allow_remote_connect": %d, "show_systray": %d, "auto_start": %d, "show_detail": %d, "php_enable": %d, "gae_proxy_enable": %d }' %\
                    (check_update
+                    , config.get(["language"], i18n_translator.lang)
                     , config.get(["modules", "launcher", "popup_webui"], 1)
                     , config.get(["modules", "launcher", "allow_remote_connect"], 0)
                     , config.get(["modules", "launcher", "show_systray"], 1)
                     , config.get(["modules", "launcher", "auto_start"], 0)
+                    , config.get(["modules", "gae_proxy", "show_detail"], 0)
                     , config.get(["modules", "php_proxy", "auto_start"], 0)
                     , config.get(["modules", "gae_proxy", "auto_start"], 0))
         elif reqs['cmd'] == ['set_config']:
@@ -264,6 +251,20 @@ class Http_Handler(simple_http_server.HttpServerHandler):
                 else:
                     config.set(["update", "check_update"], check_update)
                     config.save()
+
+                    data = '{"res":"success"}'
+
+            elif 'language' in reqs:
+                language = reqs['language'][0]
+
+                if language not in i18n_translator.get_valid_languages():
+                    data = '{"res":"fail, language:%s"}' % language
+                else:
+                    config.set(["language"], language)
+                    config.save()
+
+                    i18n_translator.lang = language
+                    self.load_module_menus()
 
                     data = '{"res":"success"}'
 
@@ -317,6 +318,17 @@ class Http_Handler(simple_http_server.HttpServerHandler):
                     config.save()
 
                     data = '{"res":"success"}'
+
+            elif 'show_detail' in reqs:
+                show_detail = int(reqs['show_detail'][0])
+                if show_detail != 0 and show_detail != 1:
+                    data = '{"res":"fail, show_detail:%s"}' % show_detail
+                else:
+                    config.set(["modules", "gae_proxy", "show_detail"], show_detail)
+                    config.save()
+
+                    data = '{"res":"success"}'
+
             elif 'gae_proxy_enable' in reqs :
                 gae_proxy_enable = int(reqs['gae_proxy_enable'][0])
                 if gae_proxy_enable != 0 and gae_proxy_enable != 1:
@@ -345,29 +357,25 @@ class Http_Handler(simple_http_server.HttpServerHandler):
                     data = '{"res":"success"}'
             else:
                 data = '{"res":"fail"}'
-        elif reqs['cmd'] == ['get_new_version']:
-            versions = update_from_github.get_github_versions()
-            data = '{"res":"success", "test_version":"%s", "stable_version":"%s", "current_version":"%s"}' % (versions[0][1], versions[1][1], current_version)
-            xlog.info("%s", data)
-        elif reqs['cmd'] == ['update_version']:
-            version = reqs['version'][0]
-            try:
-                update_from_github.update_version(version)
-                data = '{"res":"success"}'
-            except Exception as e:
-                xlog.info("update_test_version fail:%r", e)
-                data = '{"res":"fail", "error":"%s"}' % e
 
         self.send_response('text/html', data)
 
-    def req_download_handler(self):
+    def req_update_handler(self):
         req = urlparse.urlparse(self.path).query
         reqs = urlparse.parse_qs(req, keep_blank_values=True)
         data = ''
 
         if reqs['cmd'] == ['get_progress']:
-            data = json.dumps(update_from_github.download_progress)
-
+            data = json.dumps(update_from_github.progress)
+        elif reqs['cmd'] == ['get_new_version']:
+            current_version = update_from_github.current_version()
+            github_versions = update_from_github.get_github_versions()
+            data = '{"res":"success", "test_version":"%s", "stable_version":"%s", "current_version":"%s"}' % (github_versions[0][1], github_versions[1][1], current_version)
+            xlog.info("%s", data)
+        elif reqs['cmd'] == ['update_version']:
+            version = reqs['version'][0]
+            update_from_github.start_update_version(version)
+            data = '{"res":"success"}'
         self.send_response('text/html', data)
 
     def req_init_module_handler(self):
@@ -413,7 +421,7 @@ def start():
     process = threading.Thread(target=server.serve_forever)
     process.setDaemon(True)
     process.start()
-    
+
     xlog.info("launcher web control started.")
 
 def stop():
