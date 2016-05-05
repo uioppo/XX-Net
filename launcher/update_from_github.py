@@ -8,27 +8,47 @@ import threading
 import re
 import zipfile
 import shutil
+<<<<<<< HEAD
+=======
+import stat
+>>>>>>> 46237f41c867f843f84c8cbcb0a88e9743c5e56e
 import ssl
 
 current_path = os.path.dirname(os.path.abspath(__file__))
 root_path = os.path.abspath( os.path.join(current_path, os.pardir))
+<<<<<<< HEAD
 python_path = os.path.join(root_path, 'python27', '1.0')
 noarch_lib = os.path.join(python_path, 'lib', 'noarch')
 sys.path.append(noarch_lib)
 
 from instances import xlog
+=======
+top_path = root_path
+data_root = os.path.join(top_path, 'data')
+python_path = os.path.join(root_path, 'python27', '1.0')
+
+>>>>>>> 46237f41c867f843f84c8cbcb0a88e9743c5e56e
 import config
 import update
+try:
+    from instances import xlog
+except:
+    import logging
+    xlog = logging.getLogger()
 
 
-data_root = os.path.join(root_path, 'data')
 if not os.path.isdir(data_root):
     os.mkdir(data_root)
+
 
 download_path = os.path.join(data_root, 'downloads')
 if not os.path.isdir(download_path):
     os.mkdir(download_path)
 
+<<<<<<< HEAD
+=======
+
+>>>>>>> 46237f41c867f843f84c8cbcb0a88e9743c5e56e
 progress = {} # link => {"size", 'downloaded', status:downloading|canceled|finished:failed}
 progress["update_status"] = "Idle"
 
@@ -91,17 +111,36 @@ def parse_readme_versions(readme_file):
     try:
         fd = open(readme_file, "r")
         lines = fd.readlines()
-        p = re.compile(r'https://codeload.github.com/XX-net/XX-Net/zip/([0-9]+)\.([0-9]+)\.([0-9]+)')
+        p = re.compile(r'https://codeload.github.com/XX-net/XX-Net/zip/([0-9]+)\.([0-9]+)\.([0-9]+) ([0-9a-f]*)')
         for line in lines:
             m = p.match(line)
             if m:
                 version = m.group(1) + "." + m.group(2) + "." + m.group(3)
-                versions.append([m.group(0), version])
+                hashsum = m.group(4)
+                versions.append([m.group(0), version, hashsum])
                 if len(versions) == 2:
                     return versions
     except Exception as e:
         xlog.exception("xxnet_version fail:%r", e)
-        raise "get_version_fail:" % readme_file
+
+    raise "get_version_fail:" % readme_file
+
+
+def current_version():
+    readme_file = os.path.join(root_path, "version.txt")
+    try:
+        with open(readme_file) as fd:
+            content = fd.read()
+            p = re.compile(r'([0-9]+)\.([0-9]+)\.([0-9]+)')
+            m = p.match(content)
+            if m:
+                version = m.group(1) + "." + m.group(2) + "." + m.group(3)
+                return version
+    except:
+        xlog.warn("get_version_fail in update_from_github")
+
+    return "get_version_fail"
+
 
 
 def current_version():
@@ -114,8 +153,13 @@ def current_version():
 
 
 def get_github_versions():
+<<<<<<< HEAD
     readme_url = "https://raw.githubusercontent.com/XX-net/XX-Net/master/README.md"
     readme_target = os.path.join(download_path, "README.md")
+=======
+    readme_url = "https://raw.githubusercontent.com/XX-net/XX-Net/master/code/default/update_version.txt"
+    readme_target = os.path.join(download_path, "version.txt")
+>>>>>>> 46237f41c867f843f84c8cbcb0a88e9743c5e56e
 
     if not download_file(readme_url, readme_target):
         raise IOError("get README %s fail:" % readme_url)
@@ -124,11 +168,22 @@ def get_github_versions():
     return versions
 
 
+<<<<<<< HEAD
 def sha1_file(filename):
+=======
+def get_hash_sum(version):
+    versions = get_github_versions()
+    for v in versions:
+        if v[1] == version:
+            return v[2]
+
+
+def hash_file_sum(filename):
+>>>>>>> 46237f41c867f843f84c8cbcb0a88e9743c5e56e
     import hashlib
 
     BLOCKSIZE = 65536
-    hasher = hashlib.sha1()
+    hasher = hashlib.sha256()
     try:
         with open(filename, 'rb') as afile:
             buf = afile.read(BLOCKSIZE)
@@ -139,6 +194,7 @@ def sha1_file(filename):
     except:
         return False
 
+<<<<<<< HEAD
 
 def download_overwrite_new_version(xxnet_version):
     global update_progress
@@ -165,13 +221,23 @@ def download_overwrite_new_version(xxnet_version):
         raise
     xlog.info("update finished unzip")
 
+=======
+
+def overwrite(xxnet_version, xxnet_unzip_path):
+>>>>>>> 46237f41c867f843f84c8cbcb0a88e9743c5e56e
     progress["update_status"] = "Over writing"
     try:
         for root, subdirs, files in os.walk(xxnet_unzip_path):
             relate_path = root[len(xxnet_unzip_path)+1:]
-            for subdir in subdirs:
+            target_relate_path = relate_path
+            if target_relate_path.startswith("code/default"):
+                target_relate_path = "code/" + xxnet_version + relate_path[12:]
 
-                target_path = os.path.join(root_path, relate_path, subdir)
+            for subdir in subdirs:
+                if relate_path == "code" and subdir == "default":
+                    subdir = xxnet_version
+
+                target_path = os.path.join(top_path, target_relate_path, subdir)
                 if not os.path.isdir(target_path):
                     xlog.info("mkdir %s", target_path)
                     os.mkdir(target_path)
@@ -183,33 +249,103 @@ def download_overwrite_new_version(xxnet_version):
 
             for filename in files:
                 src_file = os.path.join(root, filename)
+<<<<<<< HEAD
                 dst_file = os.path.join(root_path, relate_path, filename)
                 if not os.path.isfile(dst_file) or sha1_file(src_file) != sha1_file(dst_file):
                     xlog.info("copy %s => %s", src_file, dst_file)
                     shutil.copy(src_file, dst_file)
+=======
+                dst_file = os.path.join(top_path, target_relate_path, filename)
+                if not os.path.isfile(dst_file) or hash_file_sum(src_file) != hash_file_sum(dst_file):
+                    xlog.info("copy %s => %s", src_file, dst_file)
+                    if sys.platform != 'win32' and os.path.isfile(dst_file):
+                        st = os.stat(dst_file)
+                        shutil.copy(src_file, dst_file)
+                        if st.st_mode & stat.S_IEXEC:
+                            os.chmod(dst_file, st.st_mode)
+                    else:
+                        shutil.copy(src_file, dst_file)
+>>>>>>> 46237f41c867f843f84c8cbcb0a88e9743c5e56e
 
     except Exception as e:
         xlog.warn("update over write fail:%r", e)
         progress["update_status"] = "Over write Fail:%r" % e
+<<<<<<< HEAD
         raise
     xlog.info("update file finished.")
+=======
+        raise e
+    xlog.info("update file finished.")
+
+
+def download_overwrite_new_version(xxnet_version):
+    global update_progress
+
+    xxnet_url = 'https://codeload.github.com/XX-net/XX-Net/zip/%s' % xxnet_version
+    xxnet_zip_file = os.path.join(download_path, "XX-Net-%s.zip" % xxnet_version)
+    xxnet_unzip_path = os.path.join(download_path, "XX-Net-%s" % xxnet_version)
+
+    progress["update_status"] = "Downloading %s" % xxnet_url
+    if not download_file(xxnet_url, xxnet_zip_file):
+        progress["update_status"] = "Download Fail."
+        raise Exception("download xxnet zip fail:%s" % xxnet_zip_file)
+
+    hash_sum = get_hash_sum(xxnet_version)
+    if len(hash_sum) and hash_file_sum(xxnet_zip_file) != hash_sum:
+        progress["update_status"] = "Download Checksum Fail."
+        raise Exception("download xxnet zip checksum fail:%s" % xxnet_zip_file)
+
+    xlog.info("update download %s finished.", download_path)
+
+    xlog.info("update start unzip")
+    progress["update_status"] = "Unziping"
+    try:
+        with zipfile.ZipFile(xxnet_zip_file, "r") as dz:
+            dz.extractall(download_path)
+            dz.close()
+    except Exception as e:
+        xlog.warn("unzip %s fail:%r", xxnet_zip_file, e)
+        progress["update_status"] = "Unzip Fail:%s" % e
+        raise e
+    xlog.info("update finished unzip")
+
+    overwrite(xxnet_version, xxnet_unzip_path)
+>>>>>>> 46237f41c867f843f84c8cbcb0a88e9743c5e56e
 
     os.remove(xxnet_zip_file)
     shutil.rmtree(xxnet_unzip_path, ignore_errors=True)
 
+<<<<<<< HEAD
+=======
 
-def restart_xxnet():
+def update_current_version(xxnet_version):
+    current_version_file = os.path.join(top_path, "code", "version.txt")
+    with open(current_version_file, "w") as fd:
+        fd.write(xxnet_version)
+>>>>>>> 46237f41c867f843f84c8cbcb0a88e9743c5e56e
+
+
+def restart_xxnet(version):
     import module_init
     module_init.stop_all()
     import web_control
     web_control.stop()
 
+<<<<<<< HEAD
     current_path = os.path.dirname(os.path.abspath(__file__))
     start_script = os.path.join(current_path, "start.py")
 
     subprocess.Popen([sys.executable, start_script])
     time.sleep(10)
     os._exit(0)
+=======
+    start_script = os.path.join(top_path, "code", version, "launcher", "start.py")
+
+    subprocess.Popen([sys.executable, start_script])
+    time.sleep(20)
+    #os._exit(0)
+
+>>>>>>> 46237f41c867f843f84c8cbcb0a88e9743c5e56e
 
 
 def update_version(version):
@@ -217,14 +353,25 @@ def update_version(version):
     try:
         download_overwrite_new_version(version)
 
+<<<<<<< HEAD
         progress["update_status"] = "Restarting"
         xlog.info("update try restart xxnet")
         restart_xxnet()
+=======
+        update_current_version(version)
+
+        progress["update_status"] = "Restarting"
+        xlog.info("update try restart xxnet")
+        restart_xxnet(version)
+>>>>>>> 46237f41c867f843f84c8cbcb0a88e9743c5e56e
     except Exception as e:
         xlog.warn("update version %s fail:%r", version, e)
 
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> 46237f41c867f843f84c8cbcb0a88e9743c5e56e
 def start_update_version(version):
     if progress["update_status"] != "Idle" and "Fail" not in progress["update_status"]:
         return progress["update_status"]
@@ -234,6 +381,7 @@ def start_update_version(version):
     th.start()
     return True
 
+<<<<<<< HEAD
 
 def clean_old_file():
     # These files moved to lib path
@@ -251,3 +399,5 @@ def clean_old_file():
     delete_file(os.path.join(root_path, "gae_proxy", "local", "xlog.pyc"))
 
 clean_old_file()
+=======
+>>>>>>> 46237f41c867f843f84c8cbcb0a88e9743c5e56e
