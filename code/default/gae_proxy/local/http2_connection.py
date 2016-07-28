@@ -129,6 +129,8 @@ class HTTP2_worker(HTTP_worker):
         # this is the export api
         if len(self.streams) > self.max_concurrent:
             self.accept_task = False
+
+        task.set_state("h2_req")
         self.request_task(task)
 
     def request_task(self, task):
@@ -178,20 +180,27 @@ class HTTP2_worker(HTTP_worker):
             try:
                 self._consume_single_frame()
             except Exception as e:
-                #xlog.warn("recv fail:%r", e)
+                xlog.debug("recv fail:%r", e)
                 self.close("recv fail:%r" % e)
 
     def get_rtt_rate(self):
         return self.rtt + len(self.streams) * 100
 
     def close(self, reason=""):
+        self.keep_running = False
         # Notify loop to exit
         # This function may be call by out side http2
         # When gae_proxy found the appid or ip is wrong
         self.send_queue.put(None)
 
         for stream in self.streams.values():
-            self.retry_task_cb(stream.task)
+            if stream.get_head_time:
+                # after get header,
+                # response have send to client
+                # can't retry
+                stream.close(reason=reason)
+            else:
+                self.retry_task_cb(stream.task)
         super(HTTP2_worker, self).close(reason)
 
     def send_ping(self):
@@ -249,7 +258,7 @@ class HTTP2_worker(HTTP_worker):
         except KeyError:
             pass
 
-        if len(self.streams) < self.max_concurrent and self.remote_window_size > 10000:
+        if self.keep_running and len(self.streams) < self.max_concurrent and self.remote_window_size > 10000:
             self.accept_task = True
 
         self.processed_tasks += 1

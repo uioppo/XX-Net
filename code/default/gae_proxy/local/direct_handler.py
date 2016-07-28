@@ -121,7 +121,7 @@ def handler(method, host, url, headers, body, wfile):
         except Exception as e:
             send_to_browser = False
             wait_time = time.time()-time_request
-            xlog.warn("direct_handler.handler send response fail. t:%d e:%r %s%s", wait_time, e, host, url)
+            xlog.info("direct_handler.handler send response fail. t:%d e:%r %s%s", wait_time, e, host, url)
 
 
         if method == 'HEAD' or response.status in (204, 304):
@@ -154,7 +154,7 @@ def handler(method, host, url, headers, body, wfile):
                         wfile.write('\r\n')
                     except Exception as e:
                         send_to_browser = False
-                        xlog.warn("direct_handler.handler send Transfer-Encoding t:%d e:%r %s/%s", time.time()-time_request, e, host, url)
+                        xlog.info("direct_handler.handler send Transfer-Encoding t:%d e:%r %s/%s", time.time()-time_request, e, host, url)
                 else:
                     if not data:
                         break
@@ -178,7 +178,8 @@ def handler(method, host, url, headers, body, wfile):
                 xlog.info("DIRECT t:%d s:%d %d %s %s", (time.time()-time_request)*1000, length, response.status, host, url)
                 return
 
-            data = response.read(config.AUTORANGE_BUFSIZE)
+            to_read = end - start + 1
+            data = response.read(to_read)
             if not data:
                 if time.time() - time_last_read > 20:
                     google_ip.report_connect_closed(response.ssl_sock.ip, "receive fail")
@@ -200,9 +201,9 @@ def handler(method, host, url, headers, body, wfile):
                         ret = wfile.write(data)
                 except Exception as e_b:
                     if e_b[0] in (errno.ECONNABORTED, errno.EPIPE, errno.ECONNRESET) or 'bad write retry' in repr(e_b):
-                        xlog.warn('direct_handler send to browser return %r %s %r', e_b, host, url)
+                        xlog.info('direct_handler send to browser return %r %s %r', e_b, host, url)
                     else:
-                        xlog.warn('direct_handler send to browser return %r %s %r', e_b, host, url)
+                        xlog.info('direct_handler send to browser return %r %s %r', e_b, host, url)
                     send_to_browser = False
 
 

@@ -56,7 +56,7 @@ class SSLConnection(object):
         timeout = self._sock.gettimeout() or 0.1
         fd = self._sock.fileno()
         time_start = time.time()
-        while True:
+        while self._connection:
             try:
                 return io_func(*args, **kwargs)
             except (OpenSSL.SSL.WantReadError, OpenSSL.SSL.WantX509LookupError):
@@ -75,6 +75,21 @@ class SSLConnection(object):
                 time_now = time.time()
                 if time_now - time_start > timeout:
                     break
+            except OpenSSL.SSL.SysCallError as e:
+                if e[0] == 10035 and 'WSAEWOULDBLOCK' in e[1]:
+                    sys.exc_clear()
+                    if io_func == self._connection.send:
+                        _, _, errors = select.select([], [fd], [fd], timeout)
+                    else:
+                        _, _, errors = select.select([fd], [], [fd], timeout)
+
+                    if errors:
+                        raise
+                    time_now = time.time()
+                    if time_now - time_start > timeout:
+                        break
+                else:
+                    raise e
             except Exception as e:
                 #xlog.exception("e:%r", e)
                 raise e
@@ -123,7 +138,7 @@ class SSLConnection(object):
                 # remote closed
                 #raise e
                 return ""
-            elif e[0] == 10054 and e[1] == "WSAECONNRESET":
+            elif e[0] == 10053 or e[0] == 10054 or e[0] == 10038:
                 return ""
             raise
 
@@ -132,14 +147,16 @@ class SSLConnection(object):
         if pending:
             ret = self._connection.recv_into(buf)
             if not ret:
-                xlog.debug("recv_into 0")
+                # xlog.debug("recv_into 0")
+                pass
             return ret
 
         while True:
             try:
                 ret = self.__iowait(self._connection.recv_into, buf)
                 if not ret:
-                    xlog.debug("recv_into 0")
+                    # xlog.debug("recv_into 0")
+                    pass
                 return ret
             except OpenSSL.SSL.ZeroReturnError:
                 continue

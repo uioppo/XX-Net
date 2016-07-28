@@ -69,6 +69,7 @@ class Stream(object):
         self.host = host
         self.task = task
         self.state = STATE_IDLE
+        self.get_head_time = None
 
         # There are two flow control windows: one for data we're sending,
         # one for data being sent to us.
@@ -211,8 +212,7 @@ class Stream(object):
             self.response_header_datas.append(frame.data)
         elif frame.type == DataFrame.type:
             # Append the data to the buffer.
-            self.response_body.append(frame.data)
-            self.response_body_len += len(frame.data)
+            self.task.put_data(frame.data)
 
             if 'END_STREAM' not in frame.flags:
                 # Increase the window size. Only do this if the data frame contains
@@ -259,24 +259,37 @@ class Stream(object):
             # We've handled the headers, zero them out.
             self.response_header_datas = None
 
+            self.task.content_length = int(self.response_headers["Content-Length"][0])
+            time_now = self.task.set_state("h2_get_head")
+            self.get_head_time = time_now
+            self.send_response()
+
         if 'END_STREAM' in frame.flags:
             #xlog.debug("%s Closing remote side of stream:%d", self.ip, self.stream_id)
-            self._close_remote()
+            time_now = time.time()
+            time_cose = time_now - self.get_head_time
+            if time_cose:
+                speed = self.task.content_length / time_cose
+                self.task.set_state("h2_finish[SP:%d]" % speed)
+                self.connection.report_speed(speed, self.task.content_length)
 
-            self.send_response()
+            self._close_remote()
 
             self.close("end stream")
 
     def send_response(self):
         status = int(self.response_headers[b':status'][0])
         strip_headers(self.response_headers)
-        body = b''.join(self.response_body)
-        response = BaseResponse(status=status, headers=self.response_headers, body=body)
+        response = BaseResponse(status=status, headers=self.response_headers)
         response.ssl_sock = self.connection.ssl_sock
         response.worker = self.connection
+        response.task = self.task
         self.task.queue.put(response)
 
     def close(self, reason=""):
+        self.task.put_data("")
+        # empty block means fail or closed.
+
         self._close_cb(self.stream_id, reason)
 
     def _handle_header_block(self, headers):

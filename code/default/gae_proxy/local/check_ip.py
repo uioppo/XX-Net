@@ -1,4 +1,5 @@
-
+#!/usr/bin/env python2
+# coding:utf-8
 import sys
 import os
 
@@ -57,7 +58,11 @@ import hyper
 
 g_cacertfile = os.path.join(current_path, "cacert.pem")
 openssl_context = openssl_wrap.SSLConnection.context_builder(ca_certs=g_cacertfile)
-openssl_context.set_session_id(binascii.b2a_hex(os.urandom(10)))
+try:
+    openssl_context.set_session_id(binascii.b2a_hex(os.urandom(10)))
+except:
+    pass
+
 if hasattr(OpenSSL.SSL, 'SESS_CACHE_BOTH'):
     openssl_context.set_session_cache_mode(OpenSSL.SSL.SESS_CACHE_BOTH)
 
@@ -88,9 +93,9 @@ def connect_ssl(ip, port=443, timeout=5, check_cert=True):
     ip_port = (ip, port)
 
     if config.PROXY_ENABLE:
-        sock = socks.socksocket(socket.AF_INET)
+        sock = socks.socksocket(socket.AF_INET if ':' not in ip else socket.AF_INET6)
     else:
-        sock = socket.socket(socket.AF_INET)
+        sock = socket.socket(socket.AF_INET if ':' not in ip else socket.AF_INET6)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     # set struct linger{l_onoff=1,l_linger=0} to avoid 10048 socket error
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', 1, 0))
@@ -225,8 +230,8 @@ def test_gae_ip2(ip, appid="xxnet-1"):
             xlog.warn("check fail:%r", e)
             return False
 
-    conn = hyper.HTTP20Connection(ssl_sock, host='%s.appspot.com'%appid, ip=ip, port=443)
     try:
+        conn = hyper.HTTP20Connection(ssl_sock, host='%s.appspot.com'%appid, ip=ip, port=443)
         conn.request('GET', '/_gh/')
     except Exception as e:
         #xlog.exception("gae %r", e)
